@@ -65,7 +65,7 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 15px;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
         }
 
         @media (max-width: 600px) {
@@ -75,8 +75,8 @@
         }
 
         button {
-            padding: 12px 20px;
-            font-size: 14px;
+            padding: 15px 20px;
+            font-size: 16px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
@@ -103,169 +103,38 @@
             cursor: not-allowed;
         }
 
-        .btn-secondary {
-            background: #ff6b35;
-            color: #fff;
-        }
-
-        .btn-secondary:hover {
-            background: #ff5520;
-            box-shadow: 0 0 15px rgba(255, 107, 53, 0.4);
-        }
-
-        .btn-secondary:disabled {
-            background: #444;
-            color: #999;
-            cursor: not-allowed;
-        }
-
-        .status-panel {
+        .message-box {
             background: #0f0f0f;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .status-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #333;
-            font-size: 14px;
-        }
-
-        .status-item:last-child {
-            border-bottom: none;
-        }
-
-        .status-label {
-            color: #888;
-            font-weight: bold;
-        }
-
-        .status-value {
-            color: #00d4ff;
-            font-weight: bold;
-        }
-
-        .status-value.warning {
-            color: #ff6b35;
-        }
-
-        .status-value.success {
-            color: #2ecc71;
-        }
-
-        .indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
-        }
-
-        .indicator.active {
-            background: #2ecc71;
-            box-shadow: 0 0 10px #2ecc71;
-        }
-
-        .indicator.inactive {
-            background: #444;
-        }
-
-        .captures-section {
-            background: #0f0f0f;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 20px;
-        }
-
-        .captures-title {
-            color: #00d4ff;
-            font-size: 16px;
-            margin-bottom: 15px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .captures-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 10px;
-        }
-
-        .capture-item {
-            position: relative;
-            overflow: hidden;
-            border-radius: 4px;
             border: 2px solid #333;
-            aspect-ratio: 16/9;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .capture-item:hover {
-            border-color: #00d4ff;
-            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
-        }
-
-        .capture-item img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .no-captures {
-            text-align: center;
-            color: #666;
-            padding: 30px 0;
-            font-size: 12px;
-        }
-
-        .message {
-            padding: 15px;
             border-radius: 4px;
-            margin-bottom: 15px;
-            font-size: 13px;
-            display: none;
+            padding: 40px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        .message.info {
-            background: rgba(0, 212, 255, 0.1);
-            border: 1px solid #00d4ff;
-            color: #00d4ff;
-            display: block;
+        .message-box.waiting {
+            color: #888;
+            border-color: #444;
         }
 
-        .message.error {
-            background: rgba(255, 107, 53, 0.1);
-            border: 1px solid #ff6b35;
-            color: #ff6b35;
-            display: block;
-        }
-
-        .message.success {
-            background: rgba(46, 204, 113, 0.1);
-            border: 1px solid #2ecc71;
+        .message-box.detected {
             color: #2ecc71;
-            display: block;
+            border-color: #2ecc71;
+            background: rgba(46, 204, 113, 0.1);
+            box-shadow: 0 0 20px rgba(46, 204, 113, 0.2);
         }
 
-        .download-btn {
-            padding: 6px 12px;
-            font-size: 11px;
-            background: #00d4ff;
-            color: #0f0f0f;
-            border: none;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-top: 8px;
-            width: 100%;
-        }
-
-        .download-btn:hover {
-            background: #00b8d4;
+        .message-box.not-detected {
+            color: #ff6b35;
+            border-color: #ff6b35;
+            background: rgba(255, 107, 53, 0.1);
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.2);
         }
     </style>
 </head>
@@ -273,58 +142,18 @@
     <div class="container">
         <h1>🎬 RACK DETECTOR</h1>
         
-        <div id="message" class="message"></div>
-
         <div class="video-section">
             <video id="video" autoplay playsinline></video>
             <canvas id="canvas"></canvas>
         </div>
 
         <div class="controls">
-            <button class="btn-primary" id="startBtn" onclick="startCamera()">START CAMERA</button>
-            <button class="btn-primary" id="stopBtn" onclick="stopCamera()" disabled>STOP CAMERA</button>
-            <button class="btn-secondary" id="captureBtn" onclick="captureFrame()" disabled>CAPTURE FRAME</button>
-            <button class="btn-secondary" id="autoBtn" onclick="toggleAutoCapture()" disabled>AUTO DETECT: OFF</button>
+            <button class="btn-primary" id="startBtn" onclick="startCamera()">START</button>
+            <button class="btn-primary" id="stopBtn" onclick="stopCamera()" disabled>STOP</button>
         </div>
 
-        <div class="status-panel">
-            <div class="status-item">
-                <span class="status-label">Camera Status</span>
-                <span class="status-value">
-                    <span class="indicator inactive" id="cameraIndicator"></span>
-                    <span id="cameraStatus">Idle</span>
-                </span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Detection Status</span>
-                <span class="status-value">
-                    <span class="indicator inactive" id="detectionIndicator"></span>
-                    <span id="detectionStatus">Waiting</span>
-                </span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Full Rack Detected</span>
-                <span class="status-value" id="fullRackStatus">No</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Current Score</span>
-                <span class="status-value" id="scoreStatus">0.00</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Frames Processed</span>
-                <span class="status-value" id="frameCount">0</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Captured Frames</span>
-                <span class="status-value" id="capturedCount">0</span>
-            </div>
-        </div>
-
-        <div class="captures-section">
-            <div class="captures-title">📷 Captured Frames</div>
-            <div class="captures-grid" id="capturesGrid">
-                <div class="no-captures">No frames captured yet. Start camera and capture or enable auto-detect!</div>
-            </div>
+        <div class="message-box waiting" id="messageBox">
+            CLICK START TO BEGIN
         </div>
     </div>
 
@@ -332,35 +161,11 @@
         let video = document.getElementById('video');
         let canvas = document.getElementById('canvas');
         let ctx = canvas.getContext('2d');
+        let messageBox = document.getElementById('messageBox');
         let stream = null;
         let frameCount = 0;
-        let capturedFrames = [];
         let isDetecting = false;
-        let autoDetect = false;
         let frameSkip = 3;
-        let processedFrames = 0;
-
-        function showMessage(text, type = 'info') {
-            const msg = document.getElementById('message');
-            msg.textContent = text;
-            msg.className = `message ${type}`;
-            setTimeout(() => msg.className = 'message', 5000);
-        }
-
-        function updateStatus(label, value, isActive = false) {
-            const statusEl = document.getElementById(label);
-            if (statusEl) {
-                statusEl.textContent = value;
-                const indicator = document.getElementById(label + 'Indicator');
-                if (indicator) {
-                    if (isActive) {
-                        indicator.className = 'indicator active';
-                    } else {
-                        indicator.className = 'indicator inactive';
-                    }
-                }
-            }
-        }
 
         async function startCamera() {
             try {
@@ -370,15 +175,13 @@
                 video.srcObject = stream;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                document.getElementById('captureBtn').disabled = false;
-                document.getElementById('autoBtn').disabled = false;
-                updateStatus('cameraStatus', 'Running', true);
-                showMessage('Camera started', 'success');
                 isDetecting = true;
+                messageBox.className = 'message-box waiting';
+                messageBox.textContent = 'SCANNING...';
                 processFrames();
             } catch (err) {
-                showMessage('Camera access denied: ' + err.message, 'error');
-                updateStatus('cameraStatus', 'Error', false);
+                messageBox.className = 'message-box not-detected';
+                messageBox.textContent = 'CAMERA ACCESS DENIED';
             }
         }
 
@@ -390,19 +193,9 @@
             isDetecting = false;
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('captureBtn').disabled = true;
-            document.getElementById('autoBtn').disabled = true;
-            updateStatus('cameraStatus', 'Stopped', false);
-            updateStatus('detectionStatus', 'Stopped', false);
-            showMessage('Camera stopped', 'info');
-        }
-
-        function toggleAutoCapture() {
-            autoDetect = !autoDetect;
-            const btn = document.getElementById('autoBtn');
-            btn.textContent = autoDetect ? 'AUTO DETECT: ON' : 'AUTO DETECT: OFF';
-            btn.style.background = autoDetect ? '#2ecc71' : '#ff6b35';
-            showMessage(autoDetect ? 'Auto-capture enabled' : 'Auto-capture disabled', 'info');
+            messageBox.className = 'message-box waiting';
+            messageBox.textContent = 'CLICK START TO BEGIN';
+            frameCount = 0;
         }
 
         function scoreFrame(frame) {
@@ -438,7 +231,6 @@
                     let centerOffset = Math.abs((rect.x + cw / 2) - w / 2) / (w / 2);
                     let centerScore = 1 - centerOffset;
                     
-                    // Simple sharpness estimation
                     let sharpness = 0.5;
                     
                     let score = (0.5 * heightCoverage) + (0.3 * centerScore) + (0.2 * sharpness);
@@ -476,19 +268,13 @@
                 let src = cv.matFromImageData(imgData);
                 
                 let result = scoreFrame(src);
-                processedFrames++;
-                
-                updateStatus('scoreStatus', result.score.toFixed(2));
-                updateStatus('frameCount', processedFrames);
-                updateStatus('detectionStatus', result.isFullRack ? 'FULL RACK DETECTED!' : 'Scanning...', result.isFullRack);
                 
                 if (result.isFullRack) {
-                    updateStatus('fullRackStatus', 'YES', true);
-                    if (autoDetect) {
-                        captureFrame();
-                    }
+                    messageBox.className = 'message-box detected';
+                    messageBox.textContent = '✓ FULL FRAME DETECTED';
                 } else {
-                    updateStatus('fullRackStatus', 'No');
+                    messageBox.className = 'message-box not-detected';
+                    messageBox.textContent = '✗ FULL FRAME NOT DETECTED';
                 }
                 
                 src.delete();
@@ -496,43 +282,6 @@
             
             requestAnimationFrame(processFrames);
         }
-
-        function captureFrame() {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const imageData = canvas.toDataURL('image/jpeg', 0.9);
-            capturedFrames.push({
-                data: imageData,
-                timestamp: new Date().toLocaleTimeString()
-            });
-            
-            document.getElementById('capturedCount').textContent = capturedFrames.length;
-            renderCapturedFrames();
-            showMessage(`Frame captured! (Total: ${capturedFrames.length})`, 'success');
-        }
-
-        function renderCapturedFrames() {
-            const grid = document.getElementById('capturesGrid');
-            
-            if (capturedFrames.length === 0) {
-                grid.innerHTML = '<div class="no-captures">No frames captured yet. Start camera and capture or enable auto-detect!</div>';
-                return;
-            }
-            
-            grid.innerHTML = capturedFrames.map((frame, idx) => `
-                <div class="capture-item">
-                    <img src="${frame.data}" alt="Capture ${idx}">
-                    <a href="${frame.data}" download="rack_frame_${idx}_${frame.timestamp.replace(/:/g, '-')}.jpg" class="download-btn">Download</a>
-                </div>
-            `).join('');
-        }
-
-        window.addEventListener('load', () => {
-            updateStatus('cameraStatus', 'Ready', false);
-            showMessage('Ready. Click START CAMERA to begin detection.', 'info');
-        });
     </script>
 </body>
 </html>
