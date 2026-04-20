@@ -136,6 +136,89 @@
             background: rgba(255, 107, 53, 0.1);
             box-shadow: 0 0 20px rgba(255, 107, 53, 0.2);
         }
+
+        .message-box {
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .btn-download {
+            background: #2ecc71;
+            color: #0f0f0f;
+            padding: 10px 20px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+            transition: all 0.3s;
+            font-family: 'Courier New', monospace;
+        }
+
+        .btn-download:hover {
+            background: #27ae60;
+            box-shadow: 0 0 15px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-cancel {
+            background: #ff6b35;
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+            transition: all 0.3s;
+            font-family: 'Courier New', monospace;
+        }
+
+        .btn-cancel:hover {
+            background: #ff5520;
+            box-shadow: 0 0 15px rgba(255, 107, 53, 0.4);
+        }
+
+        .recording-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #ff3333;
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+                box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.7);
+            }
+            70% {
+                opacity: 1;
+                box-shadow: 0 0 0 10px rgba(255, 51, 51, 0);
+            }
+            100% {
+                opacity: 1;
+                box-shadow: 0 0 0 0 rgba(255, 51, 51, 0);
+            }
+        }
+
+        .recording-info {
+            font-size: 14px;
+            color: #ff6b35;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -143,7 +226,7 @@
         <h1>🎬 RACK DETECTOR</h1>
         
         <div class="video-section">
-            <video id="video" autoplay playsinline></video>
+            <video id="video" autoplay playsinline muted></video>
             <canvas id="canvas"></canvas>
         </div>
 
@@ -153,7 +236,7 @@
         </div>
 
         <div class="message-box waiting" id="messageBox">
-            CLICK START TO BEGIN
+            <span>CLICK START TO BEGIN</span>
         </div>
     </div>
 
@@ -166,6 +249,8 @@
         let frameCount = 0;
         let isDetecting = false;
         let frameSkip = 3;
+        let mediaRecorder = null;
+        let recordedChunks = [];
 
         async function startCamera() {
             try {
@@ -176,13 +261,45 @@
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 isDetecting = true;
+                
+                // Start recording
+                startRecording();
+                
                 messageBox.className = 'message-box waiting';
-                messageBox.textContent = 'SCANNING...';
+                messageBox.innerHTML = '<span>SCANNING...</span>';
                 processFrames();
             } catch (err) {
                 messageBox.className = 'message-box not-detected';
-                messageBox.textContent = 'CAMERA ACCESS DENIED';
+                messageBox.innerHTML = '<span>CAMERA ACCESS DENIED</span>';
             }
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            const videoTracks = stream.getVideoTracks();
+            
+            if (videoTracks.length === 0) {
+                console.error('No video tracks found');
+                return;
+            }
+
+            const options = { mimeType: 'video/webm;codecs=vp9' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'video/webm;codecs=vp8';
+            }
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'video/webm';
+            }
+
+            mediaRecorder = new MediaRecorder(stream, options);
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+            
+            mediaRecorder.start();
         }
 
         function stopCamera() {
@@ -190,12 +307,41 @@
                 stream.getTracks().forEach(track => track.stop());
                 stream = null;
             }
+            
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            
             isDetecting = false;
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             messageBox.className = 'message-box waiting';
-            messageBox.textContent = 'CLICK START TO BEGIN';
+            messageBox.innerHTML = '<span>CLICK START TO BEGIN</span>';
             frameCount = 0;
+        }
+
+        function downloadVideo() {
+            if (recordedChunks.length === 0) {
+                alert('No video recorded');
+                return;
+            }
+
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `rack_detection_${new Date().getTime()}.webm`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            stopCamera();
+        }
+
+        function cancelRecording() {
+            recordedChunks = [];
+            stopCamera();
         }
 
         function scoreFrame(frame) {
@@ -271,10 +417,10 @@
                 
                 if (result.isFullRack) {
                     messageBox.className = 'message-box detected';
-                    messageBox.textContent = '✓ FULL FRAME DETECTED';
+                    messageBox.innerHTML = '<span>✓ FULL FRAME DETECTED</span><div class="action-buttons"><button class="btn-download" onclick="downloadVideo()">DOWNLOAD VIDEO</button><button class="btn-cancel" onclick="cancelRecording()">CANCEL</button></div>';
                 } else {
                     messageBox.className = 'message-box not-detected';
-                    messageBox.textContent = '✗ FULL FRAME NOT DETECTED';
+                    messageBox.innerHTML = '<span>✗ FULL FRAME NOT DETECTED</span><div class="recording-info"><span class="recording-indicator"></span>RECORDING...</div>';
                 }
                 
                 src.delete();
