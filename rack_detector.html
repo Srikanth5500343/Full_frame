@@ -1,10 +1,38 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>RackTrack Capture</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>RackTrack — Full Frame Check</title>
+  <style>
+    html,body{height:100%;margin:0;background:#000;color:#fff;font-family:sans-serif}
+    video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+    canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+    #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:40px;z-index:2;width:92%;max-width:480px}
+    .toast-inner{background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:center;border-left:3px solid #ffcc00}
+    .toast-inner.ok{border-left-color:#00ff88}
+    .toast-inner.err{border-left-color:#ff3b3b}
+    .toast-icon{font-size:18px}
+    .toast-label{font-size:10px;opacity:0.8}
+    .toast-msg{font-weight:600}
+  </style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<div id="toast">
+  <div class="toast-inner info" id="toastInner">
+    <div class="toast-icon" id="toastIcon">ℹ️</div>
+    <div style="flex:1">
+      <div class="toast-label" id="toastLabel">Instructions</div>
+      <div class="toast-msg" id="toastMsg">Initializing camera…</div>
+    </div>
+  </div>
+</div>
+
 <script>
-// Simplified: only keep full-frame (rack) detection and a live indicator.
+// Minimal full-frame rack detection script — placed after DOM so elements exist.
 const video = document.getElementById('video')
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
@@ -13,7 +41,6 @@ const toastIcon = document.getElementById('toastIcon')
 const toastLabel = document.getElementById('toastLabel')
 const toastMsg = document.getElementById('toastMsg')
 
-// Offscreen for analysis
 const offW = 160, offH = 120
 const off = document.createElement('canvas'); off.width = offW; off.height = offH
 const offCtx = off.getContext('2d', {willReadFrequently:true})
@@ -22,15 +49,14 @@ async function startCamera(){
   try{
     const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}, audio:false})
     video.srcObject = s
-    video.play().catch(()=>{})
+    await video.play().catch(()=>{})
+    showToast('info','📸','Camera Ready','Point the camera at the rack')
   } catch(e){ showToast('err','⚠️','Camera Error', e.message) }
 }
 
 function grabOff(){
-  try{
-    offCtx.drawImage(video,0,0,offW,offH)
-    return offCtx.getImageData(0,0,offW,offH)
-  } catch(e){ return {data:new Uint8ClampedArray(offW*offH*4)} }
+  try{ offCtx.drawImage(video,0,0,offW,offH); return offCtx.getImageData(0,0,offW,offH) }
+  catch(e){ return {data:new Uint8ClampedArray(offW*offH*4)} }
 }
 
 function analyzeRackFrame(){
@@ -47,36 +73,23 @@ function analyzeRackFrame(){
   for(let i=0;i<lums.length;i++) varSum+=(lums[i]-b)*(lums[i]-b)
   const variance = varSum/lums.length
   const rowHasEdge = new Uint8Array(offH)
-  for(let y=0;y<offH;y++){
-    let ec=0
-    for(let x=0;x<offW-4;x+=4) if(Math.abs(lums[y*offW+x]-lums[y*offW+x+4])>20) ec++
-    rowHasEdge[y] = ec>=3?1:0
-  }
+  for(let y=0;y<offH;y++){ let ec=0; for(let x=0;x<offW-4;x+=4) if(Math.abs(lums[y*offW+x]-lums[y*offW+x+4])>20) ec++; rowHasEdge[y]=ec>=3?1:0 }
   const colHasEdge = new Uint8Array(offW)
-  for(let x=0;x<offW;x++){
-    let ec=0
-    for(let y=0;y<offH-4;y+=4) if(Math.abs(lums[y*offW+x]-lums[(y+4)*offW+x])>20) ec++
-    colHasEdge[x] = ec>=3?1:0
-  }
+  for(let x=0;x<offW;x++){ let ec=0; for(let y=0;y<offH-4;y+=4) if(Math.abs(lums[y*offW+x]-lums[(y+4)*offW+x])>20) ec++; colHasEdge[x]=ec>=3?1:0 }
   let edgeRows=0, edgeCols=0
   for(let y=0;y<offH;y++) edgeRows+=rowHasEdge[y]
   for(let x=0;x<offW;x++) edgeCols+=colHasEdge[x]
-  const rowCoverage = edgeRows/offH
-  const colCoverage = edgeCols/offW
-  const q = Math.floor(offH*0.25)
-  let topEdge=0, botEdge=0
-  for(let y=0;y<q;y++)         topEdge+=rowHasEdge[y]
+  const rowCoverage = edgeRows/offH, colCoverage = edgeCols/offW
+  const q = Math.floor(offH*0.25), qc = Math.floor(offW*0.25)
+  let topEdge=0, botEdge=0, leftEdge=0, rightEdge=0
+  for(let y=0;y<q;y++) topEdge+=rowHasEdge[y]
   for(let y=offH-q;y<offH;y++) botEdge+=rowHasEdge[y]
-  const qc = Math.floor(offW*0.25)
-  let leftEdge=0, rightEdge=0
-  for(let x=0;x<qc;x++)        leftEdge+=colHasEdge[x]
+  for(let x=0;x<qc;x++) leftEdge+=colHasEdge[x]
   for(let x=offW-qc;x<offW;x++) rightEdge+=colHasEdge[x]
   const tooClose  = variance < 400 || b > 215
   const tooDark   = b < 25
-  const noFullCoverage = rowCoverage < 0.60 || colCoverage < 0.60
-                      || topEdge/q  < 0.35 || botEdge/q   < 0.35
-                      || leftEdge/qc < 0.35 || rightEdge/qc < 0.35
-  return { ok: !tooClose && !tooDark && !noFullCoverage, brightness:b, tooClose, tooDark, noFullCoverage }
+  const noFullCoverage = rowCoverage < 0.60 || colCoverage < 0.60 || topEdge/q < 0.35 || botEdge/q < 0.35 || leftEdge/qc < 0.35 || rightEdge/qc < 0.35
+  return { ok: !tooClose && !tooDark && !noFullCoverage, brightness: b, tooClose, tooDark, noFullCoverage }
 }
 
 function showToast(type, ico, lbl, msg){
@@ -87,31 +100,22 @@ function showToast(type, ico, lbl, msg){
 }
 
 function drawRackGuide(){
-  const W = canvas.width, H = canvas.height
-  const bw = W * 0.88, bh = H * 0.86, bx = (W-bw)/2, by = (H-bh)/2
-  ctx.save()
-  ctx.strokeStyle = 'rgba(255,204,0,0.9)'
-  ctx.lineWidth = 2
-  ctx.setLineDash([12,8])
-  ctx.strokeRect(bx,by,bw,bh)
-  ctx.setLineDash([])
-  ctx.restore()
+  const W=canvas.width=window.innerWidth, H=canvas.height=window.innerHeight
+  const bw=W*0.88, bh=H*0.86, bx=(W-bw)/2, by=(H-bh)/2
+  ctx.clearRect(0,0,W,H)
+  ctx.save(); ctx.strokeStyle='rgba(255,204,0,0.9)'; ctx.lineWidth=2; ctx.setLineDash([12,8]); ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([]); ctx.restore()
 }
 
-function syncCanvas(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight }
-syncCanvas(); window.addEventListener('resize', syncCanvas)
-
-let lastAnalysis = 0
+let lastAnalysis=0
 function loop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height)
   if(video.readyState >= 2){
     const now = Date.now()
     if(now - lastAnalysis > 600){
-      const res = analyzeRackFrame()
-      if(res.ok) showToast('ok','✅','Full Frame','Rack appears fully in frame')
-      else if(res.tooDark) showToast('err','🌑','Too Dark','Improve lighting so the rack is visible')
-      else if(res.tooClose) showToast('err','🔍','Too Close','Step back until the full rack fits')
-      else if(res.noFullCoverage) showToast('err','⚠️','Not Full Rack','Fit entire rack top-to-bottom and left-to-right')
+      const r = analyzeRackFrame()
+      if(r.ok) showToast('ok','✅','Full Frame','Rack appears fully in frame')
+      else if(r.tooDark) showToast('err','🌑','Too Dark','Improve lighting')
+      else if(r.tooClose) showToast('err','🔍','Too Close','Step back')
+      else if(r.noFullCoverage) showToast('err','⚠️','Not Full Rack','Fit entire rack in frame')
       lastAnalysis = now
     }
     drawRackGuide()
@@ -122,242 +126,6 @@ function loop(){
 startCamera()
 loop()
 </script>
-  const qc = Math.floor(offW*0.25)
-  let leftEdge=0, rightEdge=0
-  for(let x=0;x<qc;x++)        leftEdge+=colHasEdge[x]
-  for(let x=offW-qc;x<offW;x++) rightEdge+=colHasEdge[x]
-  const tooClose  = variance < 400 || b > 215
-  const tooDark   = b < 25
-  const noFullCoverage = rowCoverage < 0.60 || colCoverage < 0.60
-                      || topEdge/q  < 0.35 || botEdge/q   < 0.35
-                      || leftEdge/qc < 0.35 || rightEdge/qc < 0.35
-  return { ok: !tooClose && !tooDark && !noFullCoverage, brightness:b, tooClose, tooDark, noFullCoverage }
-}
 
-// ── Shake vignette ────────────────────────────────────────────────────────────
-function updateShakeVig(){
-  const excess = accelMag - 14
-  if(excess > 0){
-    const a = Math.min(0.5, excess / 40)
-    shakeVig.style.background = `radial-gradient(ellipse at center,transparent 35%,rgba(255,40,40,${a}) 100%)`
-    shakeVig.style.opacity = '1'
-  } else {
-    shakeVig.style.opacity = '0'
-  }
-}
-
-// ── Phase: Rack ───────────────────────────────────────────────────────────────
-function processRack(now){
-  if(now - rackPhaseStart < 2000){
-    showToast('info','📐','Step 1 — Full Rack','Stand back. Fit the ENTIRE rack top-to-bottom in frame.')
-    clearBlock(); return
-  }
-  const {ok, tooClose, tooDark, noFullCoverage} = analyzeRackFrame()
-  if(ok){
-    if(!rackHoldStart) rackHoldStart = now
-    const held = now - rackHoldStart
-    const pct  = Math.round(Math.min(100, held / RACK_HOLD_MS * 100))
-    showToast('ok','✅','Rack in Frame!', `Hold steady… ${pct}%`)
-    clearBlock()
-    if(held >= RACK_HOLD_MS) transitionToScan()
-  } else {
-    if(rackHoldStart !== null){
-      const reason = tooClose
-        ? 'You moved too close to the rack.\nStep back so the FULL rack fits in frame and record again.'
-        : 'You moved the camera before completing the capture.\nPlease record again from the beginning.'
-      stopAndFail(reason); return
-    }
-    rackHoldStart = null
-    if(tooDark){
-      showBlock('🌑','Too Dark','Improve lighting so the rack is clearly visible.')
-      showToast('err','🌑','Too Dark','Move to a brighter area.')
-    } else if(tooClose){
-      showBlock('🔍','Too Close!','Step BACK — the whole rack must fit in the frame.')
-      showToast('err','🔍','Too Close','Step back until the full rack is visible.')
-    } else if(noFullCoverage){
-      showBlock('📐','Show Full Rack','The ENTIRE rack must fill the frame top-to-bottom and left-to-right.\nStep back further.')
-      showToast('warn','📐','Not Full Rack','Step back — fit the WHOLE rack from top to bottom shelf in frame.')
-    } else {
-      showBlock('📐','Show Full Rack','Step back until the ENTIRE rack fits top-to-bottom in frame.')
-      showToast('warn','📐','Step 1 — Full Rack','Move back — fit the whole rack in frame.')
-    }
-  }
-}
-
-// ── Transition to scan ────────────────────────────────────────────────────────
-function transitionToScan(){
-  if(phase==='scan-prep') return
-  phase='scan-prep'; clearBlock()
-  rotateHint.classList.add('show')
-  let count=3; rhCd.textContent='Starting in 3…'
-  const tick=setInterval(()=>{
-    count--
-    if(count>0){ rhCd.textContent=`Starting in ${count}…` }
-    else{
-      clearInterval(tick)
-      rotateHint.classList.remove('show')
-      recIndicator.style.opacity = '1'
-      setLandscape(true)
-      phase='scan'
-      zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
-      wrongDirSince=null; wrongDirCount=0
-      fastSince=null; stallSince=null
-      currentUnit=1
-      unitScanStartTs = Date.now()
-      pauseBtn.textContent='⏸'
-      pauseBtn.classList.add('enabled')
-      showToast('info','→','Scan Unit 1','Hold phone sideways. Sweep camera LEFT → RIGHT.')
-    }
-  },1000)
-}
-
-// ── Phase: Scan ───────────────────────────────────────────────────────────────
-function processScan(now){
-  if(paused) return
-
-  if(!gyroAvailable){
-    showToast('warn','📡','Sensor Unavailable','Motion sensor not detected. Sweep left → right manually.')
-    return
-  }
-
-  // ── Shake check ──────────────────────────────────────────────────────────
-  if(accelMag > SHAKE_THRESH){
-    shakeBlock = true
-    showBlock('🤚','Too Shaky','Hold steady. Move slowly left to right only.')
-    showToast('err','🤚','Shaking!','Hold camera steady.')
-    return
-  }
-  if(shakeBlock && accelMag < 30){ shakeBlock = false; clearBlock() }
-  if(shakeBlock) return
-
-  const pan = getPanState()
-
-  // ── Vertical / diagonal motion ────────────────────────────────────────────
-  if(pan.notHorizontal){
-    stallSince = null; fastSince = null; wrongDirSince = null
-    showBlock('↕️','Pan Sideways!','Move camera LEFT → RIGHT only — not up or down.')
-    showToast('err','↕️','Go Sideways!','Sweep LEFT → RIGHT — not up/down.')
-    return
-  }
-
-  // ── Wrong direction ───────────────────────────────────────────────────────
-  if(pan.wrongDir){
-    stallSince = null; fastSince = null
-    if(!wrongDirSince) wrongDirSince = now
-    if(now - wrongDirSince > 600){
-      wrongDirCount++
-      if(wrongDirCount === 1){
-        showBlock('⬅️','Wrong Direction!','Pan LEFT → RIGHT only.\nZones reset — start from the left again.')
-        showToast('err','⬅️','Wrong Direction!','Sweep LEFT → RIGHT only. Zones reset.')
-        zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
-        wrongDirSince = null
-        return
-      }
-      if(wrongDirCount >= 2){
-        stopAndFail('You swept the wrong direction twice.\nScan must go LEFT → RIGHT.\nPlease record again from the beginning.')
-        return
-      }
-    }
-    return
-  } else {
-    if(wrongDirSince) clearBlock()
-    wrongDirSince = null
-  }
-
-  // ── Too fast ──────────────────────────────────────────────────────────────
-  if(pan.tooFast){
-    if(!fastSince) fastSince = now
-    if(now - fastSince > 500){
-      showBlock('🐇','Too Fast!','Slow down for a clear scan.')
-      showToast('err','🐇','Too Fast','Slow down your pan speed.')
-    }
-    return
-  } else {
-    if(fastSince){ clearBlock() }
-    fastSince = null
-  }
-
-  // ── Not moving / stalled ──────────────────────────────────────────────────
-  if(pan.tooSlow){
-    if(!stallSince) stallSince = now
-    if(now - stallSince > 5000){
-      showBlock('→','Sweep Left to Right','Move the camera slowly from LEFT to RIGHT across the rack.')
-      showToast('warn','→','Sweep Left → Right','Pan the camera horizontally LEFT → RIGHT.')
-    }
-    return
-  } else {
-    if(stallSince){ clearBlock() }
-    stallSince = null
-  }
-
-  // ── Valid right-pan: accumulate TIME in the current zone ─────────────────
-  clearBlock()
-
-  if(pan.panningRight && lastPanTs !== null){
-    const dt = Math.min(now - lastPanTs, 150)
-    zoneTime[currentZone] = Math.min(ZONE_MS, zoneTime[currentZone] + dt)
-    if(zoneTime[currentZone] >= ZONE_MS){
-      zonesDone = currentZone + 1
-      if(currentZone < N_ZONES - 1) currentZone++
-    }
-  }
-  lastPanTs = pan.panningRight ? now : null
-
-  if(zonesDone < N_ZONES) return
-
-  const unitElapsed = unitScanStartTs !== null ? (now - unitScanStartTs) : null
-
-  currentUnit++
-  zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
-  wrongDirSince=null; wrongDirCount=0; fastSince=null; stallSince=null
-  clearBlock()
-  unitScanStartTs = now
-
-  if(unitElapsed !== null && unitElapsed < 3000){
-    const secs = (unitElapsed / 1000).toFixed(1)
-    showToast('warn','⏱','Too Quick — ' + secs + 's',
-      'Unit ' + (currentUnit-1) + ' done in ' + secs + 's. Aim for 3–4 sec — sweep a bit slower next unit.')
-  } else {
-    showToast('ok','✅','Unit '+(currentUnit-1)+' Done!',
-      'Keep going OR press ⏸ to move to the next unit row.')
-  }
-}
-
-// ── Canvas drawing ────────────────────────────────────────────────────────────
-function drawRackGuide(){
-  const W=canvas.width, H=canvas.height, t=Date.now()/1000
-  const bw=W*.88, bh=H*.86, bx=(W-bw)/2, by=(H-bh)/2
-  ctx.save()
-  ctx.strokeStyle=`rgba(255,204,0,${.5+Math.sin(t*2.5)*.2})`
-  ctx.lineWidth=2; ctx.setLineDash([14,7]); ctx.lineDashOffset=-(t*25)%21
-  ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([])
-  ctx.strokeStyle='#ffcc00'; ctx.lineWidth=2.5
-  ;[[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]].forEach(([cx,cy,sx,sy])=>{
-    ctx.beginPath(); ctx.moveTo(cx+sx*20,cy); ctx.lineTo(cx,cy); ctx.lineTo(cx,cy+sy*20); ctx.stroke()
-  })
-  ctx.restore()
-}
-
-// ── Canvas sync ───────────────────────────────────────────────────────────────
-function syncCanvas(){ canvas.width=window.innerWidth; canvas.height=window.innerHeight }
-syncCanvas()
-window.addEventListener('resize', syncCanvas)
-
-// ── Render loop ───────────────────────────────────────────────────────────────
-function loop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height)
-  updateShakeVig()
-  if(recording && phase!=='idle'){
-    drawRackGuide()
-  }
-  if(recording){
-    const now=Date.now()
-    if(phase==='rack')      processRack(now)
-    else if(phase==='scan') processScan(now)
-  }
-  requestAnimationFrame(loop)
-}
-loop()
-</script>
 </body>
 </html>
