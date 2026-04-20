@@ -1,538 +1,363 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rack Frame Detector</title>
-    <script async src="https://cdnjs.cloudflare.com/ajax/libs/opencv.js/4.5.2/opencv.min.js"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>RackTrack Capture</title>
+<script>
+// Simplified: only keep full-frame (rack) detection and a live indicator.
+const video = document.getElementById('video')
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d')
+const toastInner = document.getElementById('toastInner')
+const toastIcon = document.getElementById('toastIcon')
+const toastLabel = document.getElementById('toastLabel')
+const toastMsg = document.getElementById('toastMsg')
 
-        body {
-            font-family: 'Courier New', monospace;
-            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
-            color: #e0e0e0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
+// Offscreen for analysis
+const offW = 160, offH = 120
+const off = document.createElement('canvas'); off.width = offW; off.height = offH
+const offCtx = off.getContext('2d', {willReadFrequently:true})
 
-        .container {
-            width: 100%;
-            max-width: 900px;
-            background: #1a1a1a;
-            border: 2px solid #00d4ff;
-            border-radius: 4px;
-            padding: 30px;
-            box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
-        }
+async function startCamera(){
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}, audio:false})
+    video.srcObject = s
+    video.play().catch(()=>{})
+  } catch(e){ showToast('err','⚠️','Camera Error', e.message) }
+}
 
-        h1 {
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 28px;
-            color: #00d4ff;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }
+function grabOff(){
+  try{
+    offCtx.drawImage(video,0,0,offW,offH)
+    return offCtx.getImageData(0,0,offW,offH)
+  } catch(e){ return {data:new Uint8ClampedArray(offW*offH*4)} }
+}
 
-        .video-section {
-            position: relative;
-            margin-bottom: 30px;
-            border: 1px solid #333;
-            border-radius: 4px;
-            overflow: hidden;
-            background: #0f0f0f;
-        }
+function analyzeRackFrame(){
+  const d = grabOff().data
+  const lums = new Float32Array(offW * offH)
+  for(let y=0;y<offH;y++) for(let x=0;x<offW;x++){
+    const i=(y*offW+x)*4
+    lums[y*offW+x] = d[i]*.299 + d[i+1]*.587 + d[i+2]*.114
+  }
+  let sum=0
+  for(let i=0;i<lums.length;i++) sum+=lums[i]
+  const b = sum/lums.length
+  let varSum=0
+  for(let i=0;i<lums.length;i++) varSum+=(lums[i]-b)*(lums[i]-b)
+  const variance = varSum/lums.length
+  const rowHasEdge = new Uint8Array(offH)
+  for(let y=0;y<offH;y++){
+    let ec=0
+    for(let x=0;x<offW-4;x+=4) if(Math.abs(lums[y*offW+x]-lums[y*offW+x+4])>20) ec++
+    rowHasEdge[y] = ec>=3?1:0
+  }
+  const colHasEdge = new Uint8Array(offW)
+  for(let x=0;x<offW;x++){
+    let ec=0
+    for(let y=0;y<offH-4;y+=4) if(Math.abs(lums[y*offW+x]-lums[(y+4)*offW+x])>20) ec++
+    colHasEdge[x] = ec>=3?1:0
+  }
+  let edgeRows=0, edgeCols=0
+  for(let y=0;y<offH;y++) edgeRows+=rowHasEdge[y]
+  for(let x=0;x<offW;x++) edgeCols+=colHasEdge[x]
+  const rowCoverage = edgeRows/offH
+  const colCoverage = edgeCols/offW
+  const q = Math.floor(offH*0.25)
+  let topEdge=0, botEdge=0
+  for(let y=0;y<q;y++)         topEdge+=rowHasEdge[y]
+  for(let y=offH-q;y<offH;y++) botEdge+=rowHasEdge[y]
+  const qc = Math.floor(offW*0.25)
+  let leftEdge=0, rightEdge=0
+  for(let x=0;x<qc;x++)        leftEdge+=colHasEdge[x]
+  for(let x=offW-qc;x<offW;x++) rightEdge+=colHasEdge[x]
+  const tooClose  = variance < 400 || b > 215
+  const tooDark   = b < 25
+  const noFullCoverage = rowCoverage < 0.60 || colCoverage < 0.60
+                      || topEdge/q  < 0.35 || botEdge/q   < 0.35
+                      || leftEdge/qc < 0.35 || rightEdge/qc < 0.35
+  return { ok: !tooClose && !tooDark && !noFullCoverage, brightness:b, tooClose, tooDark, noFullCoverage }
+}
 
-        video {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
+function showToast(type, ico, lbl, msg){
+  toastInner.className = 'toast-inner '+(type==='ok'?'ok':type==='err'?'err':'info')
+  toastIcon.textContent = ico
+  toastLabel.textContent = lbl
+  toastMsg.textContent = msg
+}
 
-        canvas {
-            display: none;
-        }
+function drawRackGuide(){
+  const W = canvas.width, H = canvas.height
+  const bw = W * 0.88, bh = H * 0.86, bx = (W-bw)/2, by = (H-bh)/2
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255,204,0,0.9)'
+  ctx.lineWidth = 2
+  ctx.setLineDash([12,8])
+  ctx.strokeRect(bx,by,bw,bh)
+  ctx.setLineDash([])
+  ctx.restore()
+}
 
-        .controls {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
+function syncCanvas(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight }
+syncCanvas(); window.addEventListener('resize', syncCanvas)
 
-        @media (max-width: 600px) {
-            .controls {
-                grid-template-columns: 1fr;
-            }
-        }
+let lastAnalysis = 0
+function loop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height)
+  if(video.readyState >= 2){
+    const now = Date.now()
+    if(now - lastAnalysis > 600){
+      const res = analyzeRackFrame()
+      if(res.ok) showToast('ok','✅','Full Frame','Rack appears fully in frame')
+      else if(res.tooDark) showToast('err','🌑','Too Dark','Improve lighting so the rack is visible')
+      else if(res.tooClose) showToast('err','🔍','Too Close','Step back until the full rack fits')
+      else if(res.noFullCoverage) showToast('err','⚠️','Not Full Rack','Fit entire rack top-to-bottom and left-to-right')
+      lastAnalysis = now
+    }
+    drawRackGuide()
+  }
+  requestAnimationFrame(loop)
+}
 
-        button {
-            padding: 12px 20px;
-            font-size: 14px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: bold;
-            transition: all 0.3s;
-            font-family: 'Courier New', monospace;
-        }
+startCamera()
+loop()
+</script>
+  const qc = Math.floor(offW*0.25)
+  let leftEdge=0, rightEdge=0
+  for(let x=0;x<qc;x++)        leftEdge+=colHasEdge[x]
+  for(let x=offW-qc;x<offW;x++) rightEdge+=colHasEdge[x]
+  const tooClose  = variance < 400 || b > 215
+  const tooDark   = b < 25
+  const noFullCoverage = rowCoverage < 0.60 || colCoverage < 0.60
+                      || topEdge/q  < 0.35 || botEdge/q   < 0.35
+                      || leftEdge/qc < 0.35 || rightEdge/qc < 0.35
+  return { ok: !tooClose && !tooDark && !noFullCoverage, brightness:b, tooClose, tooDark, noFullCoverage }
+}
 
-        .btn-primary {
-            background: #00d4ff;
-            color: #0f0f0f;
-        }
+// ── Shake vignette ────────────────────────────────────────────────────────────
+function updateShakeVig(){
+  const excess = accelMag - 14
+  if(excess > 0){
+    const a = Math.min(0.5, excess / 40)
+    shakeVig.style.background = `radial-gradient(ellipse at center,transparent 35%,rgba(255,40,40,${a}) 100%)`
+    shakeVig.style.opacity = '1'
+  } else {
+    shakeVig.style.opacity = '0'
+  }
+}
 
-        .btn-primary:hover {
-            background: #00b8d4;
-            box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
-        }
+// ── Phase: Rack ───────────────────────────────────────────────────────────────
+function processRack(now){
+  if(now - rackPhaseStart < 2000){
+    showToast('info','📐','Step 1 — Full Rack','Stand back. Fit the ENTIRE rack top-to-bottom in frame.')
+    clearBlock(); return
+  }
+  const {ok, tooClose, tooDark, noFullCoverage} = analyzeRackFrame()
+  if(ok){
+    if(!rackHoldStart) rackHoldStart = now
+    const held = now - rackHoldStart
+    const pct  = Math.round(Math.min(100, held / RACK_HOLD_MS * 100))
+    showToast('ok','✅','Rack in Frame!', `Hold steady… ${pct}%`)
+    clearBlock()
+    if(held >= RACK_HOLD_MS) transitionToScan()
+  } else {
+    if(rackHoldStart !== null){
+      const reason = tooClose
+        ? 'You moved too close to the rack.\nStep back so the FULL rack fits in frame and record again.'
+        : 'You moved the camera before completing the capture.\nPlease record again from the beginning.'
+      stopAndFail(reason); return
+    }
+    rackHoldStart = null
+    if(tooDark){
+      showBlock('🌑','Too Dark','Improve lighting so the rack is clearly visible.')
+      showToast('err','🌑','Too Dark','Move to a brighter area.')
+    } else if(tooClose){
+      showBlock('🔍','Too Close!','Step BACK — the whole rack must fit in the frame.')
+      showToast('err','🔍','Too Close','Step back until the full rack is visible.')
+    } else if(noFullCoverage){
+      showBlock('📐','Show Full Rack','The ENTIRE rack must fill the frame top-to-bottom and left-to-right.\nStep back further.')
+      showToast('warn','📐','Not Full Rack','Step back — fit the WHOLE rack from top to bottom shelf in frame.')
+    } else {
+      showBlock('📐','Show Full Rack','Step back until the ENTIRE rack fits top-to-bottom in frame.')
+      showToast('warn','📐','Step 1 — Full Rack','Move back — fit the whole rack in frame.')
+    }
+  }
+}
 
-        .btn-primary:disabled {
-            background: #444;
-            color: #999;
-            cursor: not-allowed;
-        }
+// ── Transition to scan ────────────────────────────────────────────────────────
+function transitionToScan(){
+  if(phase==='scan-prep') return
+  phase='scan-prep'; clearBlock()
+  rotateHint.classList.add('show')
+  let count=3; rhCd.textContent='Starting in 3…'
+  const tick=setInterval(()=>{
+    count--
+    if(count>0){ rhCd.textContent=`Starting in ${count}…` }
+    else{
+      clearInterval(tick)
+      rotateHint.classList.remove('show')
+      recIndicator.style.opacity = '1'
+      setLandscape(true)
+      phase='scan'
+      zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
+      wrongDirSince=null; wrongDirCount=0
+      fastSince=null; stallSince=null
+      currentUnit=1
+      unitScanStartTs = Date.now()
+      pauseBtn.textContent='⏸'
+      pauseBtn.classList.add('enabled')
+      showToast('info','→','Scan Unit 1','Hold phone sideways. Sweep camera LEFT → RIGHT.')
+    }
+  },1000)
+}
 
-        .btn-secondary {
-            background: #ff6b35;
-            color: #fff;
-        }
+// ── Phase: Scan ───────────────────────────────────────────────────────────────
+function processScan(now){
+  if(paused) return
 
-        .btn-secondary:hover {
-            background: #ff5520;
-            box-shadow: 0 0 15px rgba(255, 107, 53, 0.4);
-        }
+  if(!gyroAvailable){
+    showToast('warn','📡','Sensor Unavailable','Motion sensor not detected. Sweep left → right manually.')
+    return
+  }
 
-        .btn-secondary:disabled {
-            background: #444;
-            color: #999;
-            cursor: not-allowed;
-        }
+  // ── Shake check ──────────────────────────────────────────────────────────
+  if(accelMag > SHAKE_THRESH){
+    shakeBlock = true
+    showBlock('🤚','Too Shaky','Hold steady. Move slowly left to right only.')
+    showToast('err','🤚','Shaking!','Hold camera steady.')
+    return
+  }
+  if(shakeBlock && accelMag < 30){ shakeBlock = false; clearBlock() }
+  if(shakeBlock) return
 
-        .status-panel {
-            background: #0f0f0f;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
+  const pan = getPanState()
 
-        .status-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #333;
-            font-size: 14px;
-        }
+  // ── Vertical / diagonal motion ────────────────────────────────────────────
+  if(pan.notHorizontal){
+    stallSince = null; fastSince = null; wrongDirSince = null
+    showBlock('↕️','Pan Sideways!','Move camera LEFT → RIGHT only — not up or down.')
+    showToast('err','↕️','Go Sideways!','Sweep LEFT → RIGHT — not up/down.')
+    return
+  }
 
-        .status-item:last-child {
-            border-bottom: none;
-        }
+  // ── Wrong direction ───────────────────────────────────────────────────────
+  if(pan.wrongDir){
+    stallSince = null; fastSince = null
+    if(!wrongDirSince) wrongDirSince = now
+    if(now - wrongDirSince > 600){
+      wrongDirCount++
+      if(wrongDirCount === 1){
+        showBlock('⬅️','Wrong Direction!','Pan LEFT → RIGHT only.\nZones reset — start from the left again.')
+        showToast('err','⬅️','Wrong Direction!','Sweep LEFT → RIGHT only. Zones reset.')
+        zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
+        wrongDirSince = null
+        return
+      }
+      if(wrongDirCount >= 2){
+        stopAndFail('You swept the wrong direction twice.\nScan must go LEFT → RIGHT.\nPlease record again from the beginning.')
+        return
+      }
+    }
+    return
+  } else {
+    if(wrongDirSince) clearBlock()
+    wrongDirSince = null
+  }
 
-        .status-label {
-            color: #888;
-            font-weight: bold;
-        }
+  // ── Too fast ──────────────────────────────────────────────────────────────
+  if(pan.tooFast){
+    if(!fastSince) fastSince = now
+    if(now - fastSince > 500){
+      showBlock('🐇','Too Fast!','Slow down for a clear scan.')
+      showToast('err','🐇','Too Fast','Slow down your pan speed.')
+    }
+    return
+  } else {
+    if(fastSince){ clearBlock() }
+    fastSince = null
+  }
 
-        .status-value {
-            color: #00d4ff;
-            font-weight: bold;
-        }
+  // ── Not moving / stalled ──────────────────────────────────────────────────
+  if(pan.tooSlow){
+    if(!stallSince) stallSince = now
+    if(now - stallSince > 5000){
+      showBlock('→','Sweep Left to Right','Move the camera slowly from LEFT to RIGHT across the rack.')
+      showToast('warn','→','Sweep Left → Right','Pan the camera horizontally LEFT → RIGHT.')
+    }
+    return
+  } else {
+    if(stallSince){ clearBlock() }
+    stallSince = null
+  }
 
-        .status-value.warning {
-            color: #ff6b35;
-        }
+  // ── Valid right-pan: accumulate TIME in the current zone ─────────────────
+  clearBlock()
 
-        .status-value.success {
-            color: #2ecc71;
-        }
+  if(pan.panningRight && lastPanTs !== null){
+    const dt = Math.min(now - lastPanTs, 150)
+    zoneTime[currentZone] = Math.min(ZONE_MS, zoneTime[currentZone] + dt)
+    if(zoneTime[currentZone] >= ZONE_MS){
+      zonesDone = currentZone + 1
+      if(currentZone < N_ZONES - 1) currentZone++
+    }
+  }
+  lastPanTs = pan.panningRight ? now : null
 
-        .indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
-        }
+  if(zonesDone < N_ZONES) return
 
-        .indicator.active {
-            background: #2ecc71;
-            box-shadow: 0 0 10px #2ecc71;
-        }
+  const unitElapsed = unitScanStartTs !== null ? (now - unitScanStartTs) : null
 
-        .indicator.inactive {
-            background: #444;
-        }
+  currentUnit++
+  zoneTime=[0,0,0]; currentZone=0; zonesDone=0; lastPanTs=null
+  wrongDirSince=null; wrongDirCount=0; fastSince=null; stallSince=null
+  clearBlock()
+  unitScanStartTs = now
 
-        .captures-section {
-            background: #0f0f0f;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 20px;
-        }
+  if(unitElapsed !== null && unitElapsed < 3000){
+    const secs = (unitElapsed / 1000).toFixed(1)
+    showToast('warn','⏱','Too Quick — ' + secs + 's',
+      'Unit ' + (currentUnit-1) + ' done in ' + secs + 's. Aim for 3–4 sec — sweep a bit slower next unit.')
+  } else {
+    showToast('ok','✅','Unit '+(currentUnit-1)+' Done!',
+      'Keep going OR press ⏸ to move to the next unit row.')
+  }
+}
 
-        .captures-title {
-            color: #00d4ff;
-            font-size: 16px;
-            margin-bottom: 15px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
+// ── Canvas drawing ────────────────────────────────────────────────────────────
+function drawRackGuide(){
+  const W=canvas.width, H=canvas.height, t=Date.now()/1000
+  const bw=W*.88, bh=H*.86, bx=(W-bw)/2, by=(H-bh)/2
+  ctx.save()
+  ctx.strokeStyle=`rgba(255,204,0,${.5+Math.sin(t*2.5)*.2})`
+  ctx.lineWidth=2; ctx.setLineDash([14,7]); ctx.lineDashOffset=-(t*25)%21
+  ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([])
+  ctx.strokeStyle='#ffcc00'; ctx.lineWidth=2.5
+  ;[[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]].forEach(([cx,cy,sx,sy])=>{
+    ctx.beginPath(); ctx.moveTo(cx+sx*20,cy); ctx.lineTo(cx,cy); ctx.lineTo(cx,cy+sy*20); ctx.stroke()
+  })
+  ctx.restore()
+}
 
-        .captures-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 10px;
-        }
+// ── Canvas sync ───────────────────────────────────────────────────────────────
+function syncCanvas(){ canvas.width=window.innerWidth; canvas.height=window.innerHeight }
+syncCanvas()
+window.addEventListener('resize', syncCanvas)
 
-        .capture-item {
-            position: relative;
-            overflow: hidden;
-            border-radius: 4px;
-            border: 2px solid #333;
-            aspect-ratio: 16/9;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .capture-item:hover {
-            border-color: #00d4ff;
-            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
-        }
-
-        .capture-item img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .no-captures {
-            text-align: center;
-            color: #666;
-            padding: 30px 0;
-            font-size: 12px;
-        }
-
-        .message {
-            padding: 15px;
-            border-radius: 4px;
-            margin-bottom: 15px;
-            font-size: 13px;
-            display: none;
-        }
-
-        .message.info {
-            background: rgba(0, 212, 255, 0.1);
-            border: 1px solid #00d4ff;
-            color: #00d4ff;
-            display: block;
-        }
-
-        .message.error {
-            background: rgba(255, 107, 53, 0.1);
-            border: 1px solid #ff6b35;
-            color: #ff6b35;
-            display: block;
-        }
-
-        .message.success {
-            background: rgba(46, 204, 113, 0.1);
-            border: 1px solid #2ecc71;
-            color: #2ecc71;
-            display: block;
-        }
-
-        .download-btn {
-            padding: 6px 12px;
-            font-size: 11px;
-            background: #00d4ff;
-            color: #0f0f0f;
-            border: none;
-            border-radius: 2px;
-            cursor: pointer;
-            margin-top: 8px;
-            width: 100%;
-        }
-
-        .download-btn:hover {
-            background: #00b8d4;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎬 RACK DETECTOR</h1>
-        
-        <div id="message" class="message"></div>
-
-        <div class="video-section">
-            <video id="video" autoplay playsinline></video>
-            <canvas id="canvas"></canvas>
-        </div>
-
-        <div class="controls">
-            <button class="btn-primary" id="startBtn" onclick="startCamera()">START CAMERA</button>
-            <button class="btn-primary" id="stopBtn" onclick="stopCamera()" disabled>STOP CAMERA</button>
-            <button class="btn-secondary" id="captureBtn" onclick="captureFrame()" disabled>CAPTURE FRAME</button>
-            <button class="btn-secondary" id="autoBtn" onclick="toggleAutoCapture()" disabled>AUTO DETECT: OFF</button>
-        </div>
-
-        <div class="status-panel">
-            <div class="status-item">
-                <span class="status-label">Camera Status</span>
-                <span class="status-value">
-                    <span class="indicator inactive" id="cameraIndicator"></span>
-                    <span id="cameraStatus">Idle</span>
-                </span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Detection Status</span>
-                <span class="status-value">
-                    <span class="indicator inactive" id="detectionIndicator"></span>
-                    <span id="detectionStatus">Waiting</span>
-                </span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Full Rack Detected</span>
-                <span class="status-value" id="fullRackStatus">No</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Current Score</span>
-                <span class="status-value" id="scoreStatus">0.00</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Frames Processed</span>
-                <span class="status-value" id="frameCount">0</span>
-            </div>
-            <div class="status-item">
-                <span class="status-label">Captured Frames</span>
-                <span class="status-value" id="capturedCount">0</span>
-            </div>
-        </div>
-
-        <div class="captures-section">
-            <div class="captures-title">📷 Captured Frames</div>
-            <div class="captures-grid" id="capturesGrid">
-                <div class="no-captures">No frames captured yet. Start camera and capture or enable auto-detect!</div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let video = document.getElementById('video');
-        let canvas = document.getElementById('canvas');
-        let ctx = canvas.getContext('2d');
-        let stream = null;
-        let frameCount = 0;
-        let capturedFrames = [];
-        let isDetecting = false;
-        let autoDetect = false;
-        let frameSkip = 3;
-        let processedFrames = 0;
-
-        function showMessage(text, type = 'info') {
-            const msg = document.getElementById('message');
-            msg.textContent = text;
-            msg.className = `message ${type}`;
-            setTimeout(() => msg.className = 'message', 5000);
-        }
-
-        function updateStatus(label, value, isActive = false) {
-            const statusEl = document.getElementById(label);
-            if (statusEl) {
-                statusEl.textContent = value;
-                const indicator = document.getElementById(label + 'Indicator');
-                if (indicator) {
-                    if (isActive) {
-                        indicator.className = 'indicator active';
-                    } else {
-                        indicator.className = 'indicator inactive';
-                    }
-                }
-            }
-        }
-
-        async function startCamera() {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-                });
-                video.srcObject = stream;
-                document.getElementById('startBtn').disabled = true;
-                document.getElementById('stopBtn').disabled = false;
-                document.getElementById('captureBtn').disabled = false;
-                document.getElementById('autoBtn').disabled = false;
-                updateStatus('cameraStatus', 'Running', true);
-                showMessage('Camera started', 'success');
-                isDetecting = true;
-                processFrames();
-            } catch (err) {
-                showMessage('Camera access denied: ' + err.message, 'error');
-                updateStatus('cameraStatus', 'Error', false);
-            }
-        }
-
-        function stopCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            isDetecting = false;
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
-            document.getElementById('captureBtn').disabled = true;
-            document.getElementById('autoBtn').disabled = true;
-            updateStatus('cameraStatus', 'Stopped', false);
-            updateStatus('detectionStatus', 'Stopped', false);
-            showMessage('Camera stopped', 'info');
-        }
-
-        function toggleAutoCapture() {
-            autoDetect = !autoDetect;
-            const btn = document.getElementById('autoBtn');
-            btn.textContent = autoDetect ? 'AUTO DETECT: ON' : 'AUTO DETECT: OFF';
-            btn.style.background = autoDetect ? '#2ecc71' : '#ff6b35';
-            showMessage(autoDetect ? 'Auto-capture enabled' : 'Auto-capture disabled', 'info');
-        }
-
-        function scoreFrame(frame) {
-            // Convert to grayscale
-            cv.cvtColor(frame, frame, cv.COLOR_RGB2GRAY);
-            
-            // Edge detection
-            let edges = cv.Mat.zeros(frame.rows, frame.cols, cv.CV_8U);
-            cv.Canny(frame, edges, 50, 150);
-            
-            // Find contours
-            let contours = new cv.MatVector();
-            let hierarchy = cv.Mat.zeros(1, 1, cv.CV_32S);
-            cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-            
-            let h = frame.rows;
-            let w = frame.cols;
-            let bestScore = 0;
-            let isFullRack = false;
-            
-            for (let i = 0; i < contours.size(); i++) {
-                let cnt = contours.get(i);
-                let rect = cv.boundingRect(cnt);
-                let cw = rect.width;
-                let ch = rect.height;
-                
-                if (cw === 0) continue;
-                
-                let aspectRatio = ch / cw;
-                
-                if (aspectRatio > 2) {
-                    let heightCoverage = ch / h;
-                    let centerOffset = Math.abs((rect.x + cw / 2) - w / 2) / (w / 2);
-                    let centerScore = 1 - centerOffset;
-                    
-                    // Simple sharpness estimation
-                    let sharpness = 0.5;
-                    
-                    let score = (0.5 * heightCoverage) + (0.3 * centerScore) + (0.2 * sharpness);
-                    
-                    if (heightCoverage > 0.7) {
-                        isFullRack = true;
-                    }
-                    
-                    if (score > bestScore) {
-                        bestScore = score;
-                    }
-                }
-                cnt.delete();
-            }
-            
-            contours.delete();
-            hierarchy.delete();
-            edges.delete();
-            
-            return { score: bestScore, isFullRack: isFullRack };
-        }
-
-        function processFrames() {
-            if (!isDetecting) return;
-            
-            frameCount++;
-            
-            if (frameCount % frameSkip === 0) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                let src = cv.matFromImageData(imgData);
-                
-                let result = scoreFrame(src);
-                processedFrames++;
-                
-                updateStatus('scoreStatus', result.score.toFixed(2));
-                updateStatus('frameCount', processedFrames);
-                updateStatus('detectionStatus', result.isFullRack ? 'FULL RACK DETECTED!' : 'Scanning...', result.isFullRack);
-                
-                if (result.isFullRack) {
-                    updateStatus('fullRackStatus', 'YES', true);
-                    if (autoDetect) {
-                        captureFrame();
-                    }
-                } else {
-                    updateStatus('fullRackStatus', 'No');
-                }
-                
-                src.delete();
-            }
-            
-            requestAnimationFrame(processFrames);
-        }
-
-        function captureFrame() {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const imageData = canvas.toDataURL('image/jpeg', 0.9);
-            capturedFrames.push({
-                data: imageData,
-                timestamp: new Date().toLocaleTimeString()
-            });
-            
-            document.getElementById('capturedCount').textContent = capturedFrames.length;
-            renderCapturedFrames();
-            showMessage(`Frame captured! (Total: ${capturedFrames.length})`, 'success');
-        }
-
-        function renderCapturedFrames() {
-            const grid = document.getElementById('capturesGrid');
-            
-            if (capturedFrames.length === 0) {
-                grid.innerHTML = '<div class="no-captures">No frames captured yet. Start camera and capture or enable auto-detect!</div>';
-                return;
-            }
-            
-            grid.innerHTML = capturedFrames.map((frame, idx) => `
-                <div class="capture-item">
-                    <img src="${frame.data}" alt="Capture ${idx}">
-                    <a href="${frame.data}" download="rack_frame_${idx}_${frame.timestamp.replace(/:/g, '-')}.jpg" class="download-btn">Download</a>
-                </div>
-            `).join('');
-        }
-
-        window.addEventListener('load', () => {
-            updateStatus('cameraStatus', 'Ready', false);
-            showMessage('Ready. Click START CAMERA to begin detection.', 'info');
-        });
-    </script>
+// ── Render loop ───────────────────────────────────────────────────────────────
+function loop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height)
+  updateShakeVig()
+  if(recording && phase!=='idle'){
+    drawRackGuide()
+  }
+  if(recording){
+    const now=Date.now()
+    if(phase==='rack')      processRack(now)
+    else if(phase==='scan') processScan(now)
+  }
+  requestAnimationFrame(loop)
+}
+loop()
+</script>
 </body>
 </html>
