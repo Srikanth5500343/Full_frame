@@ -1,44 +1,73 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>RackTrack — Full Frame + Recording</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rack Recorder</title>
 
 <style>
-html,body{height:100%;margin:0;background:#000;color:#fff;font-family:sans-serif}
-video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
-canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+html,body{
+  margin:0;
+  height:100%;
+  background:#000;
+  font-family:sans-serif;
+  color:#fff;
+}
 
-#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:40px;z-index:2;width:92%;max-width:480px}
-.toast-inner{background:rgba(0,0,0,0.7);border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:center;border-left:3px solid #ffcc00}
-.toast-inner.ok{border-left-color:#00ff88}
-.toast-inner.err{border-left-color:#ff3b3b}
-
-.controls{
+video, canvas{
   position:fixed;
-  top:20px;
-  right:20px;
-  z-index:3;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+#controls{
+  position:fixed;
+  bottom:20px;
+  left:0;
+  width:100%;
   display:flex;
-  flex-direction:column;
-  gap:10px;
+  justify-content:center;
+  align-items:center;
+  gap:20px;
+  z-index:5;
 }
 
 button{
-  padding:10px;
+  padding:12px 18px;
+  font-size:16px;
   border:none;
-  border-radius:6px;
+  border-radius:50px;
   font-weight:bold;
-  cursor:pointer;
+}
+
+#startBtn{ background:#00c853; color:#fff; }
+#stopBtn{ background:#d50000; color:#fff; }
+
+#timer{
+  position:fixed;
+  top:20px;
+  left:50%;
+  transform:translateX(-50%);
+  font-size:20px;
+  font-weight:bold;
+  background:rgba(0,0,0,0.6);
+  padding:6px 12px;
+  border-radius:8px;
 }
 
 #downloadLink{
+  position:fixed;
+  bottom:90px;
+  left:50%;
+  transform:translateX(-50%);
   background:#00ff88;
   color:#000;
-  text-decoration:none;
-  padding:10px;
+  padding:10px 16px;
   border-radius:6px;
   display:none;
+  text-decoration:none;
+  font-weight:bold;
 }
 </style>
 </head>
@@ -48,20 +77,13 @@ button{
 <video id="video" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
 
-<div id="toast">
-  <div class="toast-inner info" id="toastInner">
-    <div id="toastIcon">ℹ️</div>
-    <div>
-      <div id="toastLabel">Instructions</div>
-      <div id="toastMsg">Initializing...</div>
-    </div>
-  </div>
-</div>
+<div id="timer">00:00</div>
 
-<div class="controls">
-  <button onclick="startRecording()">Start Recording</button>
-  <button onclick="stopRecording()">Stop</button>
-  <a id="downloadLink" download="rack_recording.webm">Download</a>
+<a id="downloadLink" download="rack_video.webm">Download Video</a>
+
+<div id="controls">
+  <button id="startBtn" onclick="startRecording()">Start</button>
+  <button id="stopBtn" onclick="stopRecording()">Stop</button>
 </div>
 
 <script>
@@ -69,88 +91,70 @@ const video = document.getElementById('video')
 const canvas = document.getElementById('canvas')
 const ctx = canvas.getContext('2d')
 
-const toastInner = document.getElementById('toastInner')
-const toastIcon = document.getElementById('toastIcon')
-const toastLabel = document.getElementById('toastLabel')
-const toastMsg = document.getElementById('toastMsg')
-
-const offW = 160, offH = 120
-const off = document.createElement('canvas')
-off.width = offW
-off.height = offH
-const offCtx = off.getContext('2d', {willReadFrequently:true})
-
 let mediaRecorder
 let recordedChunks = []
-let canRecord = false
+let recording = false
+let timerInterval
+let seconds = 0
 
+// CAMERA
 async function startCamera(){
-  try{
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:'environment'},
-      audio:false
-    })
-    video.srcObject = stream
-    await video.play()
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:'environment'},
+    audio:false
+  })
+  video.srcObject = stream
+}
+startCamera()
 
-    showToast('info','📸','Step 1',
-      'Capture FULL rack inside the box, then start recording')
-  }catch(e){
-    showToast('err','⚠️','Camera Error',e.message)
-  }
+// TIMER
+function updateTimer(){
+  seconds++
+  const mins = String(Math.floor(seconds/60)).padStart(2,'0')
+  const secs = String(seconds%60).padStart(2,'0')
+  document.getElementById('timer').textContent = `${mins}:${secs}`
 }
 
-function grabOff(){
-  offCtx.drawImage(video,0,0,offW,offH)
-  return offCtx.getImageData(0,0,offW,offH).data
+// RECORD START
+function startRecording(){
+  if(recording) return
+
+  recordedChunks = []
+  mediaRecorder = new MediaRecorder(video.srcObject)
+
+  mediaRecorder.ondataavailable = e=>{
+    if(e.data.size>0) recordedChunks.push(e.data)
+  }
+
+  mediaRecorder.onstop = ()=>{
+    const blob = new Blob(recordedChunks,{type:'video/webm'})
+    const url = URL.createObjectURL(blob)
+
+    const link = document.getElementById('downloadLink')
+    link.href = url
+    link.style.display = 'block'
+  }
+
+  mediaRecorder.start()
+  recording = true
+
+  // start timer
+  seconds = 0
+  document.getElementById('timer').textContent = "00:00"
+  timerInterval = setInterval(updateTimer,1000)
 }
 
-function analyzeRackFrame(){
-  const d = grabOff()
-  let sum=0
+// RECORD STOP
+function stopRecording(){
+  if(!recording) return
 
-  const lums = new Float32Array(offW*offH)
+  mediaRecorder.stop()
+  recording = false
 
-  for(let i=0;i<lums.length;i++){
-    const idx=i*4
-    const lum = d[idx]*.299 + d[idx+1]*.587 + d[idx+2]*.114
-    lums[i]=lum
-    sum+=lum
-  }
-
-  const brightness = sum/lums.length
-
-  let variance=0
-  for(let i=0;i<lums.length;i++){
-    variance+=(lums[i]-brightness)**2
-  }
-  variance/=lums.length
-
-  let edges=0
-  for(let i=0;i<lums.length-1;i++){
-    if(Math.abs(lums[i]-lums[i+1])>20) edges++
-  }
-
-  const edgeRatio = edges/lums.length
-
-  const tooDark = brightness < 30
-  const tooBright = brightness > 220
-  const tooClose = variance < 300
-  const fullFrame = edgeRatio > 0.15
-
-  return {
-    ok: !tooDark && !tooBright && !tooClose && fullFrame,
-    tooDark, tooBright, tooClose, fullFrame
-  }
+  clearInterval(timerInterval)
 }
 
-function showToast(type, ico, label, msg){
-  toastInner.className = 'toast-inner ' + (type==='ok'?'ok':type==='err'?'err':'info')
-  toastIcon.textContent = ico
-  toastLabel.textContent = label
-  toastMsg.textContent = msg
-}
-
+// GUIDE BOX (optional)
 function drawGuide(){
   const W=canvas.width=window.innerWidth
   const H=canvas.height=window.innerHeight
@@ -168,64 +172,11 @@ function drawGuide(){
 }
 
 function loop(){
-  if(video.readyState>=2){
-    const r = analyzeRackFrame()
-
-    if(r.ok){
-      showToast('ok','✅','Ready','Rack fully detected')
-      canRecord = true
-    }else if(r.tooDark){
-      showToast('err','🌑','Too Dark','Improve lighting')
-      canRecord = false
-    }else if(r.tooClose){
-      showToast('err','🔍','Too Close','Move back')
-      canRecord = false
-    }else if(!r.fullFrame){
-      showToast('err','⚠️','Adjust','Fit full rack in box')
-      canRecord = false
-    }
-
-    drawGuide()
-  }
+  drawGuide()
   requestAnimationFrame(loop)
 }
-
-function startRecording(){
-  if(!canRecord){
-    showToast('err','⚠️','Wait','Capture full rack first')
-    return
-  }
-
-  recordedChunks = []
-  mediaRecorder = new MediaRecorder(video.srcObject)
-
-  mediaRecorder.ondataavailable = e=>{
-    if(e.data.size>0) recordedChunks.push(e.data)
-  }
-
-  mediaRecorder.onstop = ()=>{
-    const blob = new Blob(recordedChunks,{type:'video/webm'})
-    const url = URL.createObjectURL(blob)
-
-    const link = document.getElementById('downloadLink')
-    link.href = url
-    link.style.display='block'
-    link.textContent='Download Video'
-  }
-
-  mediaRecorder.start()
-  showToast('info','🎥','Recording','Recording started...')
-}
-
-function stopRecording(){
-  if(mediaRecorder){
-    mediaRecorder.stop()
-    showToast('ok','✅','Saved','Recording stopped')
-  }
-}
-
-startCamera()
 loop()
+
 </script>
 
 </body>
